@@ -48,6 +48,32 @@ func (t *Task) Name() string {
 	return t.Task
 }
 
+func (t *Tasks) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+
+	case yaml.MappingNode:
+		tasks := map[string]*Task{}
+		if err := node.Decode(tasks); err != nil {
+			return err
+		}
+
+		// For each task, set its name
+		for name := range tasks {
+			if tasks[name] == nil {
+				tasks[name] = &Task{
+					Task: name,
+				}
+			}
+			tasks[name].Task = name
+		}
+
+		*t = Tasks(tasks)
+		return nil
+	}
+
+	return fmt.Errorf("yaml: line %d: cannot unmarshal %s into tasks", node.Line, node.ShortTag())
+}
+
 func (t *Task) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 
