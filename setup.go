@@ -75,14 +75,18 @@ func (e *Executor) setCurrentDir() error {
 }
 
 func (e *Executor) readTaskfile() error {
-	var err error
-	e.Taskfile, e.Dir, err = read.Taskfile(&read.ReaderNode{
-		Dir:        e.Dir,
-		Entrypoint: e.Entrypoint,
-		Parent:     nil,
-		Optional:   false,
-	})
-	return err
+
+	// Create a new DAG (directed acyclic graph) of Taskfiles
+	dag, err := read.NewTaskfileDAG(e.Dir, e.Entrypoint)
+	if err != nil {
+		return err
+	}
+
+	if err := dag.Visualize("./taskfile-dag.gv"); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (e *Executor) setupFuzzyModel() {

@@ -27,31 +27,24 @@ var (
 	}
 )
 
-type ReaderNode struct {
-	Dir        string
-	Entrypoint string
-	Optional   bool
-	Parent     *ReaderNode
-}
-
 // Taskfile reads a Taskfile for a given directory
 // Uses current dir when dir is left empty. Uses Taskfile.yml
 // or Taskfile.yaml when entrypoint is left empty
-func Taskfile(readerNode *ReaderNode) (*taskfile.Taskfile, string, error) {
-	if readerNode.Dir == "" {
+func Taskfile(node *readerNode) (*taskfile.Taskfile, string, error) {
+	if node.dir == "" {
 		d, err := os.Getwd()
 		if err != nil {
 			return nil, "", err
 		}
-		readerNode.Dir = d
+		node.dir = d
 	}
 
-	path, err := existsWalk(filepathext.SmartJoin(readerNode.Dir, readerNode.Entrypoint))
+	path, err := findWalk(filepathext.SmartJoin(node.dir, node.entrypoint))
 	if err != nil {
 		return nil, "", err
 	}
-	readerNode.Dir = filepath.Dir(path)
-	readerNode.Entrypoint = filepath.Base(path)
+	node.dir = filepath.Dir(path)
+	node.entrypoint = filepath.Base(path)
 
 	t, err := readTaskfile(path)
 	if err != nil {
@@ -62,7 +55,7 @@ func Taskfile(readerNode *ReaderNode) (*taskfile.Taskfile, string, error) {
 	_ = t.Includes.Range(func(key string, includedFile taskfile.IncludedTaskfile) error {
 		// Set the base directory for resolving relative paths, but only if not already set
 		if includedFile.BaseDir == "" {
-			includedFile.BaseDir = readerNode.Dir
+			includedFile.BaseDir = node.dir
 			t.Includes.Set(key, includedFile)
 		}
 		return nil
@@ -91,19 +84,11 @@ func Taskfile(readerNode *ReaderNode) (*taskfile.Taskfile, string, error) {
 			return err
 		}
 
-		path, err = exists(path)
-		if err != nil {
-			if includedTask.Optional {
-				return nil
-			}
-			return err
-		}
-
-		includeReaderNode := &ReaderNode{
-			Dir:        filepath.Dir(path),
-			Entrypoint: filepath.Base(path),
-			Parent:     readerNode,
-			Optional:   includedTask.Optional,
+		includeReaderNode := &readerNode{
+			dir:        filepath.Dir(path),
+			entrypoint: filepath.Base(path),
+			parent:     node,
+			optional:   includedTask.Optional,
 		}
 
 		if err := checkCircularIncludes(includeReaderNode); err != nil {
@@ -164,7 +149,7 @@ func Taskfile(readerNode *ReaderNode) (*taskfile.Taskfile, string, error) {
 	}
 
 	if t.Version.Compare(taskfile.V3) < 0 {
-		path = filepathext.SmartJoin(readerNode.Dir, fmt.Sprintf("Taskfile_%s.yml", runtime.GOOS))
+		path = filepathext.SmartJoin(node.dir, fmt.Sprintf("Taskfile_%s.yml", runtime.GOOS))
 		if _, err = os.Stat(path); err == nil {
 			osTaskfile, err := readTaskfile(path)
 			if err != nil {
@@ -184,7 +169,7 @@ func Taskfile(readerNode *ReaderNode) (*taskfile.Taskfile, string, error) {
 		task.Task = name
 	}
 
-	return t, readerNode.Dir, nil
+	return t, node.dir, nil
 }
 
 func readTaskfile(file string) (*taskfile.Taskfile, error) {
@@ -198,12 +183,18 @@ func readTaskfile(file string) (*taskfile.Taskfile, error) {
 	if err := yaml.NewDecoder(f).Decode(&t); err != nil {
 		return nil, fmt.Errorf("task: Failed to parse %s:\n%w", filepathext.TryAbsToRel(file), err)
 	}
+
 	return &t, nil
 }
 
-func exists(path string) (string, error) {
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+func find(path string) (string, error) {
 	fi, err := os.Stat(path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 	if fi.Mode().IsRegular() {
@@ -212,7 +203,7 @@ func exists(path string) (string, error) {
 
 	for _, n := range defaultTaskfiles {
 		fpath := filepathext.SmartJoin(path, n)
-		if _, err := os.Stat(fpath); err == nil {
+		if _, err := os.Stat(fpath); !errors.Is(err, os.ErrNotExist) {
 			return fpath, nil
 		}
 	}
@@ -220,14 +211,14 @@ func exists(path string) (string, error) {
 	return "", fmt.Errorf(`task: No Taskfile found in "%s". Use "task --init" to create a new one`, path)
 }
 
-func existsWalk(path string) (string, error) {
+func findWalk(path string) (string, error) {
 	origPath := path
 	owner, err := sysinfo.Owner(path)
 	if err != nil {
 		return "", err
 	}
 	for {
-		fpath, err := exists(path)
+		fpath, err := find(path)
 		if err == nil {
 			return fpath, nil
 		}
@@ -250,22 +241,22 @@ func existsWalk(path string) (string, error) {
 	}
 }
 
-func checkCircularIncludes(node *ReaderNode) error {
+func checkCircularIncludes(node *readerNode) error {
 	if node == nil {
 		return errors.New("task: failed to check for include cycle: node was nil")
 	}
-	if node.Parent == nil {
+	if node.parent == nil {
 		return errors.New("task: failed to check for include cycle: node.Parent was nil")
 	}
 	var curNode = node
-	var basePath = filepathext.SmartJoin(node.Dir, node.Entrypoint)
-	for curNode.Parent != nil {
-		curNode = curNode.Parent
-		curPath := filepathext.SmartJoin(curNode.Dir, curNode.Entrypoint)
+	var basePath = filepathext.SmartJoin(node.dir, node.entrypoint)
+	for curNode.parent != nil {
+		curNode = curNode.parent
+		curPath := filepathext.SmartJoin(curNode.dir, curNode.entrypoint)
 		if curPath == basePath {
 			return fmt.Errorf("task: include cycle detected between %s <--> %s",
 				curPath,
-				filepathext.SmartJoin(node.Parent.Dir, node.Parent.Entrypoint),
+				filepathext.SmartJoin(node.parent.dir, node.parent.entrypoint),
 			)
 		}
 	}
