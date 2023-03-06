@@ -18,6 +18,16 @@ type Precondition struct {
 	Msg string
 }
 
+func (orig *Precondition) DeepCopy() *Precondition {
+	if orig == nil {
+		return nil
+	}
+	return &Precondition{
+		Sh:  orig.Sh,
+		Msg: orig.Msg,
+	}
+}
+
 // UnmarshalYAML implements yaml.Unmarshaler interface.
 func (p *Precondition) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {

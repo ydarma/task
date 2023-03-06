@@ -19,10 +19,18 @@ type Cmd struct {
 	Platforms   []*Platform
 }
 
-// Dep is a task dependency
-type Dep struct {
-	Task string
-	Vars *Vars
+func (orig *Cmd) DeepCopy() *Cmd {
+	return &Cmd{
+		Cmd:         orig.Cmd,
+		Silent:      orig.Silent,
+		Task:        orig.Task,
+		Set:         deepCopySlice(orig.Set),
+		Shopt:       deepCopySlice(orig.Shopt),
+		Vars:        orig.Vars.DeepCopy(),
+		IgnoreError: orig.IgnoreError,
+		Defer:       orig.Defer,
+		Platforms:   deepCopySlice(orig.Platforms),
+	}
 }
 
 func (c *Cmd) UnmarshalYAML(node *yaml.Node) error {
@@ -93,31 +101,4 @@ func (c *Cmd) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	return fmt.Errorf("yaml: line %d: cannot unmarshal %s into command", node.Line, node.ShortTag())
-}
-
-func (d *Dep) UnmarshalYAML(node *yaml.Node) error {
-	switch node.Kind {
-
-	case yaml.ScalarNode:
-		var task string
-		if err := node.Decode(&task); err != nil {
-			return err
-		}
-		d.Task = task
-		return nil
-
-	case yaml.MappingNode:
-		var taskCall struct {
-			Task string
-			Vars *Vars
-		}
-		if err := node.Decode(&taskCall); err != nil {
-			return err
-		}
-		d.Task = taskCall.Task
-		d.Vars = taskCall.Vars
-		return nil
-	}
-
-	return fmt.Errorf("cannot unmarshal %s into dependency", node.ShortTag())
 }
