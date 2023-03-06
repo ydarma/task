@@ -5,20 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/go-task/task/v3/internal/execext"
 	"github.com/go-task/task/v3/internal/filepathext"
 	"github.com/go-task/task/v3/internal/sysinfo"
-	"github.com/go-task/task/v3/internal/templater"
 	"github.com/go-task/task/v3/taskfile"
 )
 
 var (
-	// ErrIncludedTaskfilesCantHaveDotenvs is returned when a included Taskfile contains dotenvs
-	ErrIncludedTaskfilesCantHaveDotenvs = errors.New("task: Included Taskfiles can't have dotenv declarations. Please, move the dotenv declaration to the main Taskfile")
-
 	defaultTaskfiles = []string{
 		"Taskfile.yml",
 		"Taskfile.yaml",
@@ -27,149 +23,22 @@ var (
 	}
 )
 
-// Taskfile reads a Taskfile for a given directory
-// Uses current dir when dir is left empty. Uses Taskfile.yml
-// or Taskfile.yaml when entrypoint is left empty
-func Taskfile(node *readerNode) (*taskfile.Taskfile, string, error) {
-	if node.dir == "" {
-		d, err := os.Getwd()
-		if err != nil {
-			return nil, "", err
-		}
-		node.dir = d
-	}
-
-	path, err := findWalk(filepathext.SmartJoin(node.dir, node.entrypoint))
+func resolvePath(baseDir, path string) (string, error) {
+	path, err := execext.Expand(path)
 	if err != nil {
-		return nil, "", err
+		return "", err
 	}
-	node.dir = filepath.Dir(path)
-	node.entrypoint = filepath.Base(path)
 
-	t, err := readTaskfile(path)
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+
+	result, err := filepath.Abs(filepathext.SmartJoin(baseDir, path))
 	if err != nil {
-		return nil, "", err
+		return "", fmt.Errorf("task: error resolving path %s relative to %s: %w", path, baseDir, err)
 	}
 
-	// Annotate any included Taskfile reference with a base directory for resolving relative paths
-	_ = t.Includes.Range(func(key string, includedFile taskfile.IncludedTaskfile) error {
-		// Set the base directory for resolving relative paths, but only if not already set
-		if includedFile.BaseDir == "" {
-			includedFile.BaseDir = node.dir
-			t.Includes.Set(key, includedFile)
-		}
-		return nil
-	})
-
-	err = t.Includes.Range(func(namespace string, includedTask taskfile.IncludedTaskfile) error {
-		if t.Version.Compare(taskfile.V3) >= 0 {
-			tr := templater.Templater{Vars: t.Vars, RemoveNoValue: true}
-			includedTask = taskfile.IncludedTaskfile{
-				Taskfile:       tr.Replace(includedTask.Taskfile),
-				Dir:            tr.Replace(includedTask.Dir),
-				Optional:       includedTask.Optional,
-				Internal:       includedTask.Internal,
-				Aliases:        includedTask.Aliases,
-				AdvancedImport: includedTask.AdvancedImport,
-				Vars:           includedTask.Vars,
-				BaseDir:        includedTask.BaseDir,
-			}
-			if err := tr.Err(); err != nil {
-				return err
-			}
-		}
-
-		path, err := includedTask.FullTaskfilePath()
-		if err != nil {
-			return err
-		}
-
-		includeReaderNode := &readerNode{
-			dir:        filepath.Dir(path),
-			entrypoint: filepath.Base(path),
-			parent:     node,
-			optional:   includedTask.Optional,
-		}
-
-		if err := checkCircularIncludes(includeReaderNode); err != nil {
-			return err
-		}
-
-		includedTaskfile, _, err := Taskfile(includeReaderNode)
-		if err != nil {
-			if includedTask.Optional {
-				return nil
-			}
-			return err
-		}
-
-		if t.Version.Compare(taskfile.V3) >= 0 && len(includedTaskfile.Dotenv) > 0 {
-			return ErrIncludedTaskfilesCantHaveDotenvs
-		}
-
-		if includedTask.AdvancedImport {
-			dir, err := includedTask.FullDirPath()
-			if err != nil {
-				return err
-			}
-
-			for k, v := range includedTaskfile.Vars.Mapping {
-				o := v
-				o.Dir = dir
-				includedTaskfile.Vars.Mapping[k] = o
-			}
-			for k, v := range includedTaskfile.Env.Mapping {
-				o := v
-				o.Dir = dir
-				includedTaskfile.Env.Mapping[k] = o
-			}
-
-			for _, task := range includedTaskfile.Tasks {
-				task.Dir = filepathext.SmartJoin(dir, task.Dir)
-				task.IncludeVars = includedTask.Vars
-				task.IncludedTaskfileVars = includedTaskfile.Vars
-				task.IncludedTaskfile = &includedTask
-			}
-		}
-
-		if err = taskfile.Merge(t, includedTaskfile, &includedTask, namespace); err != nil {
-			return err
-		}
-
-		if includedTaskfile.Tasks["default"] != nil && t.Tasks[namespace] == nil {
-			defaultTaskName := fmt.Sprintf("%s:default", namespace)
-			t.Tasks[defaultTaskName].Aliases = append(t.Tasks[defaultTaskName].Aliases, namespace)
-			t.Tasks[defaultTaskName].Aliases = append(t.Tasks[defaultTaskName].Aliases, includedTask.Aliases...)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, "", err
-	}
-
-	if t.Version.Compare(taskfile.V3) < 0 {
-		path = filepathext.SmartJoin(node.dir, fmt.Sprintf("Taskfile_%s.yml", runtime.GOOS))
-		if _, err = os.Stat(path); err == nil {
-			osTaskfile, err := readTaskfile(path)
-			if err != nil {
-				return nil, "", err
-			}
-			if err = taskfile.Merge(t, osTaskfile, nil); err != nil {
-				return nil, "", err
-			}
-		}
-	}
-
-	for name, task := range t.Tasks {
-		if task == nil {
-			task = &taskfile.Task{}
-			t.Tasks[name] = task
-		}
-		task.Task = name
-	}
-
-	return t, node.dir, nil
+	return result, nil
 }
 
 func readTaskfile(file string) (*taskfile.Taskfile, error) {
@@ -239,26 +108,4 @@ func findWalk(path string) (string, error) {
 		owner = parentOwner
 		path = parentPath
 	}
-}
-
-func checkCircularIncludes(node *readerNode) error {
-	if node == nil {
-		return errors.New("task: failed to check for include cycle: node was nil")
-	}
-	if node.parent == nil {
-		return errors.New("task: failed to check for include cycle: node.Parent was nil")
-	}
-	var curNode = node
-	var basePath = filepathext.SmartJoin(node.dir, node.entrypoint)
-	for curNode.parent != nil {
-		curNode = curNode.parent
-		curPath := filepathext.SmartJoin(curNode.dir, curNode.entrypoint)
-		if curPath == basePath {
-			return fmt.Errorf("task: include cycle detected between %s <--> %s",
-				curPath,
-				filepathext.SmartJoin(node.parent.dir, node.parent.entrypoint),
-			)
-		}
-	}
-	return nil
 }

@@ -166,7 +166,7 @@ func (c *CompilerV3) HandleDynamicVar(v taskfile.Var, dir string) (string, error
 	return result, nil
 }
 
-// ResetCache clear the dymanic variables cache
+// ResetCache clears the dynamic variables cache
 func (c *CompilerV3) ResetCache() {
 	c.muDynamicCache.Lock()
 	defer c.muDynamicCache.Unlock()

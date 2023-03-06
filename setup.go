@@ -82,7 +82,8 @@ func (e *Executor) readTaskfile() error {
 		return err
 	}
 
-	if err := dag.Visualize("./taskfile-dag.gv"); err != nil {
+	// Merge the DAG into a single Taskfile
+	if e.Taskfile, err = dag.Merge(); err != nil {
 		return err
 	}
 
