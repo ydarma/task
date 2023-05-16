@@ -52,6 +52,7 @@ var flags struct {
 	listJson    bool
 	taskSort    string
 	status      bool
+	insecure    bool
 	force       bool
 	watch       bool
 	verbose     bool
@@ -109,6 +110,7 @@ func run() error {
 	pflag.BoolVarP(&flags.listJson, "json", "j", false, "Formats task list as JSON.")
 	pflag.StringVar(&flags.taskSort, "sort", "", "Changes the order of the tasks when listed.")
 	pflag.BoolVar(&flags.status, "status", false, "Exits with non-zero exit code if any of the given tasks is not up-to-date.")
+	pflag.BoolVar(&flags.insecure, "insecure", false, "Forces Task to download Taskfiles over insecure connections.")
 	pflag.BoolVarP(&flags.force, "force", "f", false, "Forces execution even when the task is up-to-date.")
 	pflag.BoolVarP(&flags.watch, "watch", "w", false, "Enables watch of the given task.")
 	pflag.BoolVarP(&flags.verbose, "verbose", "v", false, "Enables verbose mode.")
@@ -192,6 +194,7 @@ func run() error {
 
 	e := task.Executor{
 		Force:       flags.force,
+		Insecure:    flags.insecure,
 		Watch:       flags.watch,
 		Verbose:     flags.verbose,
 		Silent:      flags.silent,

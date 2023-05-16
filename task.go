@@ -42,6 +42,7 @@ type Executor struct {
 	TempDir     string
 	Entrypoint  string
 	Force       bool
+	Insecure    bool
 	Watch       bool
 	Verbose     bool
 	Silent      bool
