@@ -309,8 +309,8 @@
             "type": "boolean"
           },
           "defer": {
-            "description": "",
-            "type": "boolean"
+            "description": "Schedule command to be run once the task finishes",
+            "type": "string"
           },
           "platforms": {
             "description": "Specifies which platforms the command should be run on.",
